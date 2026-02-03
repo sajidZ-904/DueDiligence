@@ -29,8 +29,10 @@ from src.models.enums import AnswerStatus, ProjectStatus, RequestStatus, Request
 from src.services.answer_service import generate_all_answers_job, generate_answer_payload
 from src.services.ingestion_service import index_document_job
 from src.services.project_service import create_project_job, update_project_job
+from src.services.text_extraction import extract_text_from_path
 from src.storage.memory_store import ManualAnswerVersionRecord, STORE
 from src.utils.ids import new_id
+from src.utils.paths import resolve_data_file
 from src.utils.time import now_utc
 from src.workers.runner import schedule
 
@@ -82,14 +84,23 @@ async def index_document_async(req: IndexDocumentAsyncRequest) -> IndexDocumentA
     request_id = new_id()
     document_id = new_id()
     STORE.create_request(request_id, RequestType.INDEX_DOCUMENT)
+    extracted_content = req.content
+    if req.file_path:
+        try:
+            path = resolve_data_file(req.file_path)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="file_not_found")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="file_path_must_be_within_data_dir")
+        extracted_content = extract_text_from_path(path)
     STORE.create_document(
         document_id,
         filename=req.filename,
-        content=req.content,
+        content=extracted_content,
         mime_type=req.mime_type,
         eligible_for_all_docs=req.eligible_for_all_docs,
     )
-    schedule(index_document_job(request_id=request_id, document_id=document_id, content=req.content))
+    schedule(index_document_job(request_id=request_id, document_id=document_id, content=extracted_content))
     return IndexDocumentAsyncResponse(request_id=request_id, document_id=document_id)
 
 
@@ -101,6 +112,15 @@ async def create_project_async(req: CreateProjectAsyncRequest) -> CreateProjectA
     project_id = new_id()
     STORE.create_request(request_id, RequestType.CREATE_PROJECT)
     scope_ids = list(req.scope_document_ids or [])
+    questionnaire_text = req.questionnaire_text
+    if req.questionnaire_file_path:
+        try:
+            path = resolve_data_file(req.questionnaire_file_path)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="file_not_found")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="file_path_must_be_within_data_dir")
+        questionnaire_text = extract_text_from_path(path)
     STORE.create_project(
         project_id,
         project_name=req.project_name,
@@ -115,7 +135,7 @@ async def create_project_async(req: CreateProjectAsyncRequest) -> CreateProjectA
             project_name=req.project_name,
             scope_type=req.scope_type,
             scope_document_ids=req.scope_document_ids,
-            questionnaire_text=req.questionnaire_text,
+            questionnaire_text=questionnaire_text,
             questions=req.questions,
         )
     )

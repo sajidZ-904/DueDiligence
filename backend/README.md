@@ -10,29 +10,23 @@ Quick Start
 
 Windows:
 ```powershell
-cd c:\DueDiligence\backend
+cd backend
+py -m venv env
+.\env\Scripts\Activate.ps1
 py -m pip install -r requirements.txt
 ```
 
 Ubuntu (and most Linux distros):
 ```bash
 cd backend
-python3 -m pip install -r requirements.txt
+python3 -m venv env
+source env/bin/activate
+pip install -r requirements.txt
 ```
 
-macOS:
-```bash
-cd backend
-python3 -m pip install -r requirements.txt
-```
 
 2) Run the API
 
-```powershell
-py -m uvicorn app:app --reload --host 127.0.0.1 --port 8000
-```
-
-Ubuntu/macOS equivalent:
 ```bash
 python3 -m uvicorn app:app --reload --host 127.0.0.1 --port 8000
 ```
@@ -45,6 +39,33 @@ python3 -m uvicorn app:app --reload --host 127.0.0.1 --port 8000
 Notes
 - The current implementation uses in-memory storage; restarting the server clears documents, projects, answers, and request IDs.
 - All async endpoints return a `request_id`. Use `GET /get-request-status` to poll until `SUCCEEDED` or `FAILED`.
+- For local development, you can ingest files from the repo `data/` folder by passing `file_path` / `questionnaire_file_path`. Paths are restricted to the `data/` directory.
+- Environment variables can be set in `backend/.env` and are loaded automatically when the API starts.
+
+AI (Transformers + LangChain, Optional)
+By default, answer generation uses a lightweight heuristic method. You can enable an AI RAG mode (retrieval + generation) powered by Hugging Face Transformers and LangChain.
+
+1) Install AI dependencies
+```bash
+pip install -r requirements.txt
+```
+
+2) Enable RAG mode
+Windows PowerShell:
+```bash
+$env:QA_AI_MODE="rag"
+py -m uvicorn app:app --reload --host 127.0.0.1 --port 8000
+```
+
+Ubuntu/macOS:
+```bash
+export QA_AI_MODE=rag
+python3 -m uvicorn app:app --reload --host 127.0.0.1 --port 8000
+```
+
+Notes
+- The first run will download the Hugging Face models (may take a while).
+- You can override models with `QA_EMBED_MODEL` and `QA_GEN_MODEL`.
 
 Module Layout
 - src/api/        HTTP route handlers for the listed endpoints
@@ -78,6 +99,15 @@ Example body:
 ```
 Copy the returned `request_id`.
 
+Using a file from the repo `data/` folder (recommended for testing the provided PDFs):
+```json
+{
+  "filename": "20260110_MiniMax_Global_Offering_Prospectus.pdf",
+  "file_path": "20260110_MiniMax_Global_Offering_Prospectus.pdf",
+  "eligible_for_all_docs": true
+}
+```
+
 2) GET /get-request-status
 - Paste `request_id` from step 1 and execute until `status` becomes `SUCCEEDED`.
 
@@ -91,6 +121,15 @@ Example body:
 }
 ```
 Copy the returned `project_id` and `request_id`, then poll request status until `SUCCEEDED`.
+
+Create a project using the provided questionnaire PDF in `data/`:
+```json
+{
+  "project_name": "ILPA Project",
+  "scope_type": "ALL_DOCS",
+  "questionnaire_file_path": "ILPA_Due_Diligence_Questionnaire_v1.2.pdf"
+}
+```
 
 4) GET /get-project-info
 - Use `project_id` and copy any `question_id` from the response.
@@ -107,14 +146,24 @@ Copy the returned `project_id` and `request_id`, then poll request status until 
 - Returns a `request_id`. Poll `GET /get-request-status` until `SUCCEEDED`.
 
 Smoke Test Script (Optional)
-This repo includes a small script that exercises indexing, project creation, and single-answer generation via the FastAPI TestClient.
+This repo includes small scripts that exercise indexing, project creation, and answer generation via the FastAPI TestClient.
 
 1) Install dev dependency:
 ```powershell
 py -m pip install -r requirements-dev.txt
 ```
 
-2) Run:
+2) Run the lightweight smoke test (fast, uses inline text):
 ```powershell
 py smoke_test.py
 ```
+
+3) Run the data-folder smoke test (indexes files in `../data/`):
+```powershell
+py -u smoke_test_file.py
+```
+
+Environment variables (optional)
+- `QA_SMOKE_MAX_FILES`: limit how many files to index (0 = no limit)
+- `QA_SMOKE_INDEX_TIMEOUT_S`: per-file indexing timeout (seconds)
+- `QA_SMOKE_PROJECT_TIMEOUT_S`: project creation timeout (seconds)

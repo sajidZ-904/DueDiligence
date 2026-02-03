@@ -27,6 +27,7 @@ class Citation(BaseModel):
 class IndexDocumentAsyncRequest(BaseModel):
     filename: str = Field(min_length=1)
     content: Optional[str] = None
+    file_path: Optional[str] = None
     mime_type: Optional[str] = None
     eligible_for_all_docs: bool = True
 
@@ -41,6 +42,7 @@ class CreateProjectAsyncRequest(BaseModel):
     scope_type: ScopeType
     scope_document_ids: Optional[List[UUID]] = None
     questionnaire_text: Optional[str] = None
+    questionnaire_file_path: Optional[str] = None
     questions: Optional[List[str]] = None
 
 

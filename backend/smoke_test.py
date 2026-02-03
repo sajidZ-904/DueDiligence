@@ -6,15 +6,15 @@ from app import app
 
 
 def wait_for_request(client: TestClient, request_id: str, timeout_s: float = 2.0) -> str:
-    started = 0.0
-    while started < timeout_s:
+    elapsed = 0.0
+    while elapsed < timeout_s:
         res = client.get("/get-request-status", params={"request_id": request_id})
         res.raise_for_status()
         status = res.json()["status"]
         if status in ("SUCCEEDED", "FAILED"):
             return status
         sleep(0.02)
-        started += 0.02
+        elapsed += 0.02
     return "TIMEOUT"
 
 
@@ -35,7 +35,7 @@ def main() -> None:
     index.raise_for_status()
     index_status = wait_for_request(client, index.json()["request_id"])
 
-    proj = client.post(
+    project = client.post(
         "/create-project-async",
         json={
             "project_name": "Demo",
@@ -43,16 +43,17 @@ def main() -> None:
             "questions": ["What was revenue?", "What was net income?"],
         },
     )
-    proj.raise_for_status()
-    proj_status = wait_for_request(client, proj.json()["request_id"])
+    project.raise_for_status()
+    project_status = wait_for_request(client, project.json()["request_id"])
 
-    info = client.get("/get-project-info", params={"project_id": proj.json()["project_id"]})
+    info = client.get("/get-project-info", params={"project_id": project.json()["project_id"]})
     info.raise_for_status()
-    first_qid = info.json()["sections"][0]["questions"][0]["question_id"]
+    sections = info.json()["sections"]
+    qid = sections[0]["questions"][0]["question_id"]
 
     ans = client.post(
         "/generate-single-answer",
-        json={"project_id": proj.json()["project_id"], "question_id": first_qid},
+        json={"project_id": project.json()["project_id"], "question_id": qid},
     )
     ans.raise_for_status()
 
@@ -60,7 +61,7 @@ def main() -> None:
         {
             "health": res.json(),
             "index_request_status": index_status,
-            "create_project_request_status": proj_status,
+            "create_project_request_status": project_status,
             "single_answer_status": ans.json()["answer"]["answer_status"],
             "single_answer_confidence": ans.json()["answer"]["confidence"],
         }
@@ -69,4 +70,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

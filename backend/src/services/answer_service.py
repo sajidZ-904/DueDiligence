@@ -71,6 +71,22 @@ def _select_chunks(project_id: UUID, question_id: UUID) -> List[Dict]:
 
 
 def generate_answer_payload(project_id: UUID, question_id: UUID) -> AnswerVersionRecord:
+    try:
+        from src.services.ai_rag import answer_with_rag, rag_enabled
+
+        if rag_enabled():
+            rag = answer_with_rag(project_id=project_id, question_id=question_id)
+            return AnswerVersionRecord(
+                answer_version_id=new_id(),
+                created_at=now_utc(),
+                answerable=rag.answerable,
+                answer_text=rag.answer_text,
+                confidence=rag.confidence,
+                citations=rag.citations,
+            )
+    except Exception:
+        pass
+
     citations = _select_chunks(project_id, question_id)
     answerable = len(citations) > 0
     if answerable:
