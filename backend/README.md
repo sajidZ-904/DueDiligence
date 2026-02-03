@@ -54,13 +54,13 @@ pip install -r requirements.txt
 Windows PowerShell:
 ```bash
 $env:QA_AI_MODE="rag"
-py -m uvicorn app:app --reload --host 127.0.0.1 --port 8000
+py -m uvicorn app:app --reload
 ```
 
 Ubuntu/macOS:
 ```bash
 export QA_AI_MODE=rag
-python3 -m uvicorn app:app --reload --host 127.0.0.1 --port 8000
+uvicorn app:app --reload
 ```
 
 Notes
@@ -148,19 +148,15 @@ Create a project using the provided questionnaire PDF in `data/`:
 Smoke Test Script (Optional)
 This repo includes small scripts that exercise indexing, project creation, and answer generation via the FastAPI TestClient.
 
-1) Install dev dependency:
+
+1) Run the lightweight smoke test (fast, uses inline text):
 ```powershell
-py -m pip install -r requirements-dev.txt
+python3 smoke_test.py
 ```
 
-2) Run the lightweight smoke test (fast, uses inline text):
+2) Run the data-folder smoke test (indexes files in `../data/`):
 ```powershell
-py smoke_test.py
-```
-
-3) Run the data-folder smoke test (indexes files in `../data/`):
-```powershell
-py -u smoke_test_file.py
+python3 smoke_test_file.py
 ```
 
 Environment variables (optional)
