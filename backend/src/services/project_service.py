@@ -4,8 +4,10 @@ from typing import Dict, List, Optional
 from uuid import UUID
 
 from src.models.enums import ProjectStatus, RequestStatus, ScopeType
+from src.services.text_extraction import extract_text_from_path
 from src.storage.memory_store import QuestionRecord, SectionRecord, STORE
 from src.utils.ids import new_id
+from src.utils.paths import resolve_data_file
 
 
 def _extract_questions(questionnaire_text: str) -> List[str]:
@@ -40,6 +42,7 @@ async def create_project_job(
     scope_type: ScopeType,
     scope_document_ids: Optional[List[UUID]],
     questionnaire_text: Optional[str],
+    questionnaire_file_path: Optional[str],
     questions: Optional[List[str]],
 ) -> None:
     STORE.update_request(request_id, status=RequestStatus.RUNNING, progress=0.05)
@@ -58,6 +61,12 @@ async def create_project_job(
         prompts = [q.strip() for q in questions if q and q.strip()]
     elif questionnaire_text:
         prompts = _extract_questions(questionnaire_text)
+    elif questionnaire_file_path:
+        try:
+            path = resolve_data_file(questionnaire_file_path)
+            prompts = _extract_questions(extract_text_from_path(path))
+        except Exception:
+            prompts = ["Provide questionnaire_text or questions to create a project."]
     else:
         prompts = ["Provide questionnaire_text or questions to create a project."]
 

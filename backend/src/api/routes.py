@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Dict, List
 from uuid import UUID
 
@@ -7,11 +8,15 @@ from fastapi import APIRouter, HTTPException
 
 from src.models.api import (
     AnswerPayload,
+    AiStatusResponse,
     CreateProjectAsyncRequest,
     CreateProjectAsyncResponse,
+    DataFilesResponse,
+    FirstQuestionResponse,
     GenerateAllAnswersRequest,
     GenerateAllAnswersResponse,
     GenerateSingleAnswerRequest,
+    GenerateSingleAnswerAsyncResponse,
     GenerateSingleAnswerResponse,
     IndexDocumentAsyncRequest,
     IndexDocumentAsyncResponse,
@@ -29,10 +34,9 @@ from src.models.enums import AnswerStatus, ProjectStatus, RequestStatus, Request
 from src.services.answer_service import generate_all_answers_job, generate_answer_payload
 from src.services.ingestion_service import index_document_job
 from src.services.project_service import create_project_job, update_project_job
-from src.services.text_extraction import extract_text_from_path
 from src.storage.memory_store import ManualAnswerVersionRecord, STORE
 from src.utils.ids import new_id
-from src.utils.paths import resolve_data_file
+from src.utils.paths import data_dir, resolve_data_file
 from src.utils.time import now_utc
 from src.workers.runner import schedule
 
@@ -87,12 +91,11 @@ async def index_document_async(req: IndexDocumentAsyncRequest) -> IndexDocumentA
     extracted_content = req.content
     if req.file_path:
         try:
-            path = resolve_data_file(req.file_path)
+            resolve_data_file(req.file_path)
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail="file_not_found")
         except ValueError:
             raise HTTPException(status_code=400, detail="file_path_must_be_within_data_dir")
-        extracted_content = extract_text_from_path(path)
     STORE.create_document(
         document_id,
         filename=req.filename,
@@ -100,8 +103,37 @@ async def index_document_async(req: IndexDocumentAsyncRequest) -> IndexDocumentA
         mime_type=req.mime_type,
         eligible_for_all_docs=req.eligible_for_all_docs,
     )
-    schedule(index_document_job(request_id=request_id, document_id=document_id, content=extracted_content))
+    schedule(index_document_job(request_id=request_id, document_id=document_id, content=extracted_content, file_path=req.file_path))
     return IndexDocumentAsyncResponse(request_id=request_id, document_id=document_id)
+
+
+@router.get("/list-data-files", response_model=DataFilesResponse)
+async def list_data_files() -> DataFilesResponse:
+    base = data_dir()
+    if not base.exists():
+        return DataFilesResponse(files=[])
+    allowed = {".pdf", ".txt", ".md"}
+    files = [p.name for p in base.iterdir() if p.is_file() and p.suffix.lower() in allowed]
+    files.sort(key=lambda x: x.lower())
+    return DataFilesResponse(files=files)
+
+
+@router.get("/ai-status", response_model=AiStatusResponse)
+async def ai_status() -> AiStatusResponse:
+    from src.services.ai_rag import rag_enabled
+
+    embed_model = os.getenv("QA_EMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2").strip()
+    gen_model = os.getenv("QA_GEN_MODEL", "google/flan-t5-small").strip()
+    enabled = rag_enabled()
+    if not enabled:
+        return AiStatusResponse(rag_enabled=False, embed_model=embed_model, gen_model=gen_model, ok=True)
+    try:
+        import torch
+        import transformers
+        return AiStatusResponse(rag_enabled=True, embed_model=embed_model, gen_model=gen_model, ok=True)
+    except Exception as e:
+        msg = " ".join((str(e) or e.__class__.__name__).split())
+        return AiStatusResponse(rag_enabled=True, embed_model=embed_model, gen_model=gen_model, ok=False, error=msg[:220])
 
 
 @router.post("/create-project-async", response_model=CreateProjectAsyncResponse)
@@ -115,12 +147,11 @@ async def create_project_async(req: CreateProjectAsyncRequest) -> CreateProjectA
     questionnaire_text = req.questionnaire_text
     if req.questionnaire_file_path:
         try:
-            path = resolve_data_file(req.questionnaire_file_path)
+            resolve_data_file(req.questionnaire_file_path)
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail="file_not_found")
         except ValueError:
             raise HTTPException(status_code=400, detail="file_path_must_be_within_data_dir")
-        questionnaire_text = extract_text_from_path(path)
     STORE.create_project(
         project_id,
         project_name=req.project_name,
@@ -136,6 +167,7 @@ async def create_project_async(req: CreateProjectAsyncRequest) -> CreateProjectA
             scope_type=req.scope_type,
             scope_document_ids=req.scope_document_ids,
             questionnaire_text=questionnaire_text,
+            questionnaire_file_path=req.questionnaire_file_path,
             questions=req.questions,
         )
     )
@@ -206,7 +238,7 @@ async def get_project_status(project_id: UUID) -> ProjectStatusResponse:
 
 
 @router.get("/get-project-info", response_model=ProjectInfoResponse)
-async def get_project_info(project_id: UUID) -> ProjectInfoResponse:
+async def get_project_info(project_id: UUID, include_answers: bool = False) -> ProjectInfoResponse:
     project = STORE.get_project(project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="project_not_found")
@@ -222,8 +254,9 @@ async def get_project_info(project_id: UUID) -> ProjectInfoResponse:
         sections.append(SectionInfo(section_id=s.section_id, title=s.title, order=s.order, questions=questions))
 
     answers: Dict[UUID, AnswerPayload] = {}
-    for qid in project.questions.keys():
-        answers[qid] = _answer_payload_for(project_id=project_id, question_id=qid)
+    if include_answers:
+        for qid in project.questions.keys():
+            answers[qid] = _answer_payload_for(project_id=project_id, question_id=qid)
 
     return ProjectInfoResponse(
         project_id=project.project_id,
@@ -234,6 +267,23 @@ async def get_project_info(project_id: UUID) -> ProjectInfoResponse:
         sections=sections,
         answers=answers,
     )
+
+
+@router.get("/get-project-first-question", response_model=FirstQuestionResponse)
+async def get_project_first_question(project_id: UUID) -> FirstQuestionResponse:
+    project = STORE.get_project(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="project_not_found")
+    if not project.sections:
+        raise HTTPException(status_code=404, detail="no_sections")
+    first_section = sorted(project.sections, key=lambda x: x.order)[0]
+    if not first_section.question_ids:
+        raise HTTPException(status_code=404, detail="no_questions")
+    first_qid = first_section.question_ids[0]
+    q = project.questions.get(first_qid)
+    if q is None:
+        raise HTTPException(status_code=404, detail="question_not_found")
+    return FirstQuestionResponse(question_id=q.question_id, prompt=q.prompt)
 
 
 @router.post("/generate-single-answer", response_model=GenerateSingleAnswerResponse)
@@ -254,6 +304,51 @@ async def generate_single_answer(req: GenerateSingleAnswerRequest) -> GenerateSi
     else:
         STORE.set_answer_status(project_id=req.project_id, question_id=req.question_id, status=AnswerStatus.MISSING_DATA)
     return GenerateSingleAnswerResponse(answer=_answer_payload_for(project_id=req.project_id, question_id=req.question_id))
+
+
+@router.post("/generate-single-answer-async", response_model=GenerateSingleAnswerAsyncResponse)
+async def generate_single_answer_async(req: GenerateSingleAnswerRequest) -> GenerateSingleAnswerAsyncResponse:
+    project = STORE.get_project(req.project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="project_not_found")
+    if req.question_id not in project.questions:
+        raise HTTPException(status_code=404, detail="question_not_found")
+
+    request_id = new_id()
+    STORE.create_request(request_id, RequestType.GENERATE_SINGLE_ANSWER)
+    STORE.update_project(req.project_id, last_request_id=request_id)
+
+    async def run() -> None:
+        STORE.update_request(request_id, status=RequestStatus.RUNNING, progress=0.05)
+        try:
+            answer = STORE.get_answer(project_id=req.project_id, question_id=req.question_id)
+            if answer is None:
+                STORE.get_or_create_answer(new_id(), project_id=req.project_id, question_id=req.question_id)
+            version = generate_answer_payload(req.project_id, req.question_id)
+            STORE.put_ai_answer_version(project_id=req.project_id, question_id=req.question_id, answer_version=version)
+            if version.answerable:
+                STORE.set_answer_status(project_id=req.project_id, question_id=req.question_id, status=AnswerStatus.DRAFT)
+            else:
+                STORE.set_answer_status(
+                    project_id=req.project_id, question_id=req.question_id, status=AnswerStatus.MISSING_DATA
+                )
+            payload = _answer_payload_for(project_id=req.project_id, question_id=req.question_id)
+            STORE.update_request(
+                request_id,
+                status=RequestStatus.SUCCEEDED,
+                progress=1.0,
+                result={"project_id": str(req.project_id), "question_id": str(req.question_id), "answer": payload.model_dump()},
+            )
+        except Exception as e:
+            STORE.update_request(
+                request_id,
+                status=RequestStatus.FAILED,
+                progress=1.0,
+                error_message=str(e),
+            )
+
+    schedule(run())
+    return GenerateSingleAnswerAsyncResponse(request_id=request_id)
 
 
 @router.post("/generate-all-answers", response_model=GenerateAllAnswersResponse)

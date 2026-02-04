@@ -5,5 +5,8 @@ from typing import Awaitable
 
 
 def schedule(coro: Awaitable[None]) -> None:
-    asyncio.create_task(coro)
+    async def run_in_thread() -> None:
+        await asyncio.to_thread(asyncio.run, coro)
+
+    asyncio.create_task(run_in_thread())
 

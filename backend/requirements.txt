@@ -3,5 +3,8 @@ uvicorn
 httpx
 pypdf
 python-dotenv
-
-
+langchain
+langchain-community
+transformers
+torch
+sentencepiece

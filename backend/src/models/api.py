@@ -100,6 +100,10 @@ class GenerateSingleAnswerResponse(BaseModel):
     answer: AnswerPayload
 
 
+class GenerateSingleAnswerAsyncResponse(BaseModel):
+    request_id: UUID
+
+
 class UpdateAnswerResponse(BaseModel):
     answer: AnswerPayload
 
@@ -143,4 +147,21 @@ class RequestStatusResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     result: Optional[Dict[str, Any]] = None
+
+
+class DataFilesResponse(BaseModel):
+    files: List[str]
+
+
+class FirstQuestionResponse(BaseModel):
+    question_id: UUID
+    prompt: str
+
+
+class AiStatusResponse(BaseModel):
+    rag_enabled: bool
+    embed_model: str
+    gen_model: str
+    ok: bool
+    error: Optional[str] = None
 

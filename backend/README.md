@@ -66,6 +66,9 @@ uvicorn app:app --reload
 Notes
 - The first run will download the Hugging Face models (may take a while).
 - You can override models with `QA_EMBED_MODEL` and `QA_GEN_MODEL`.
+- `QA_GEN_MODEL` must be a Hugging Face model id (for Transformers), not an OpenAI-style name like `gpt-*`.
+- Debugging: `GET /ai-status` returns whether AI mode is enabled and whether required libraries can load.
+- Windows note: if `torch` fails to import with a DLL error (e.g. WinError 1114), install Microsoft Visual C++ Redistributable (x64) and restart.
 
 Module Layout
 - src/api/        HTTP route handlers for the listed endpoints

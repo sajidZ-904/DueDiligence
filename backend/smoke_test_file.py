@@ -29,7 +29,7 @@ def list_data_files() -> List[Path]:
     base = data_dir()
     if not base.exists():
         return []
-    allowed = {".pdf", ".txt", ".md"}
+    allowed = {".pdf", ".docx", ".txt", ".md"}
     files = [p for p in base.iterdir() if p.is_file() and p.suffix.lower() in allowed]
     files.sort(key=lambda p: p.name.lower())
     return files

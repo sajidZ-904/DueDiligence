@@ -32,16 +32,17 @@ def _lazy_embedder():
     with _lock:
         if _embedder is not None:
             return _embedder
-        import numpy as np
         import torch
         from transformers import AutoModel, AutoTokenizer
+        from transformers.utils import logging as hf_logging
 
         model_name = os.getenv("QA_EMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2").strip()
+        hf_logging.set_verbosity_error()
         tokenizer = AutoTokenizer.from_pretrained(model_name)
         model = AutoModel.from_pretrained(model_name)
         model.eval()
 
-        def embed_texts(texts: List[str]) -> "np.ndarray":
+        def embed_texts(texts: List[str]) -> "torch.Tensor":
             tokens = tokenizer(
                 texts,
                 padding=True,
@@ -54,10 +55,9 @@ def _lazy_embedder():
             hidden = out.last_hidden_state
             mask = tokens["attention_mask"].unsqueeze(-1).expand(hidden.size()).float()
             pooled = (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1e-9)
-            vec = pooled.cpu().numpy().astype("float32")
-            norms = np.linalg.norm(vec, axis=1, keepdims=True)
-            vec = vec / (norms + 1e-12)
-            return vec
+            pooled = pooled.detach().cpu().float()
+            pooled = pooled / pooled.norm(dim=1, keepdim=True).clamp(min=1e-12)
+            return pooled
 
         _embedder = embed_texts
         return _embedder
@@ -70,8 +70,15 @@ def _lazy_llm():
             return _llm
 
         from transformers import pipeline
+        from transformers.utils import logging as hf_logging
 
         gen_model = os.getenv("QA_GEN_MODEL", "google/flan-t5-small").strip()
+        if gen_model.lower().startswith("gpt-"):
+            raise ValueError(
+                "QA_GEN_MODEL must be a local Hugging Face Transformers model id (e.g. google/flan-t5-small). "
+                "OpenAI-style model names like 'gpt-*' are not supported by this Transformers pipeline."
+            )
+        hf_logging.set_verbosity_error()
         gen = pipeline(
             "text2text-generation",
             model=gen_model,
@@ -99,7 +106,7 @@ def _build_context(docs: List[DocumentRecord], top_chunks: List[Tuple[float, Doc
 
 
 def _select_top_chunks(docs: List[DocumentRecord], question: str, *, k: int = 5) -> List[Tuple[float, DocumentRecord, ChunkRecord]]:
-    import numpy as np
+    import torch
 
     embed = _lazy_embedder()
     chunk_rows: List[Tuple[DocumentRecord, ChunkRecord]] = []
@@ -118,11 +125,12 @@ def _select_top_chunks(docs: List[DocumentRecord], question: str, *, k: int = 5)
     q_vec = embed([question])[0]
     m = embed(texts)
     sims = m @ q_vec
-    idx = np.argsort(-sims)[: min(k, len(sims))]
+    top_k = min(k, int(sims.shape[0]))
+    scores, indices = torch.topk(sims, k=top_k, largest=True, sorted=True)
     out: List[Tuple[float, DocumentRecord, ChunkRecord]] = []
-    for i in idx:
+    for score, i in zip(scores.tolist(), indices.tolist()):
         doc, chunk = chunk_rows[int(i)]
-        out.append((float(sims[int(i)]), doc, chunk))
+        out.append((float(score), doc, chunk))
     return out
 
 

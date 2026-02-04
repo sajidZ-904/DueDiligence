@@ -4,8 +4,10 @@ from typing import List, Optional
 from uuid import UUID
 
 from src.models.enums import ProjectStatus, RequestStatus, ScopeType
+from src.services.text_extraction import extract_text_from_path
 from src.storage.memory_store import ChunkRecord, STORE
 from src.utils.ids import new_id
+from src.utils.paths import resolve_data_file
 from src.utils.time import now_utc
 
 
@@ -27,7 +29,7 @@ def _chunk_text(content: str, *, max_len: int = 800) -> List[str]:
     return [c for c in chunks if c]
 
 
-async def index_document_job(*, request_id: UUID, document_id: UUID, content: Optional[str]) -> None:
+async def index_document_job(*, request_id: UUID, document_id: UUID, content: Optional[str], file_path: Optional[str]) -> None:
     STORE.update_request(request_id, status=RequestStatus.RUNNING, progress=0.05)
     doc = STORE.get_document(document_id)
     if doc is None:
@@ -40,6 +42,13 @@ async def index_document_job(*, request_id: UUID, document_id: UUID, content: Op
         return
 
     text = content or ""
+    if not text and file_path:
+        try:
+            path = resolve_data_file(file_path)
+        except Exception:
+            path = None
+        if path is not None:
+            text = extract_text_from_path(path) or ""
     chunks_text = _chunk_text(text) if text else []
     if not chunks_text:
         chunks_text = [f"Document {doc.filename} indexed with no extractable text at {now_utc().isoformat()}"]

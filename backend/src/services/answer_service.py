@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from typing import Dict, List, Optional, Tuple
 from uuid import UUID
@@ -71,6 +72,7 @@ def _select_chunks(project_id: UUID, question_id: UUID) -> List[Dict]:
 
 
 def generate_answer_payload(project_id: UUID, question_id: UUID) -> AnswerVersionRecord:
+    rag_error: Optional[str] = None
     try:
         from src.services.ai_rag import answer_with_rag, rag_enabled
 
@@ -84,8 +86,13 @@ def generate_answer_payload(project_id: UUID, question_id: UUID) -> AnswerVersio
                 confidence=rag.confidence,
                 citations=rag.citations,
             )
-    except Exception:
-        pass
+    except Exception as e:
+        msg = str(e) or e.__class__.__name__
+        msg = " ".join(msg.split())
+        rag_error = msg[:180]
+        strict = os.getenv("QA_AI_STRICT", "").strip().lower() in {"1", "true", "yes", "on"}
+        if strict:
+            raise
 
     citations = _select_chunks(project_id, question_id)
     answerable = len(citations) > 0
@@ -96,6 +103,9 @@ def generate_answer_payload(project_id: UUID, question_id: UUID) -> AnswerVersio
     else:
         confidence = 0.1
         answer_text = "Not answerable from the currently indexed documents for this project scope."
+
+    if rag_error:
+        answer_text = f"AI RAG mode unavailable ({rag_error}). {answer_text}"
 
     return AnswerVersionRecord(
         answer_version_id=new_id(),
